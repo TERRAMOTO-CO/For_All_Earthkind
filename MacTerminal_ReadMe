@@ -1,0 +1,126 @@
+ESP32-CAM Push-Upload  —  Mac Terminal Quick-Start
+==================================================
+
+This read-me covers **only the Mac-side Python pieces**:  
+setting up a Flask receiver so every JPEG the ESP32-CAM posts will be 
+saved into a folder on your Mac.  
+(Everything else — camera wiring, UNO flash controller, etc. — stays as in the main guide.)
+
+────────────────────────────────────────────────────────────────────────
+1.  Create a workspace folder
+────────────────────────────────────────────────────────────────────────
+$ mkdir -p ~/esp32cam_inbox
+$ cd ~/esp32cam_inbox
+
+────────────────────────────────────────────────────────────────────────
+2.  Make—and activate—a Python virtual-environment
+   (keeps dependencies isolated)
+────────────────────────────────────────────────────────────────────────
+$ python3 -m venv venv          # one-time only
+$ source venv/bin/activate      # activate → prompt now shows “(venv)”
+
+────────────────────────────────────────────────────────────────────────
+3.  Install Flask inside that venv
+────────────────────────────────────────────────────────────────────────
+(venv) $ pip install flask
+
+────────────────────────────────────────────────────────────────────────
+4.  Create **receiver.py**
+────────────────────────────────────────────────────────────────────────
+(venv) $ nano receiver.py     # or your favourite editor
+
+# Paste everything below ──────────────────────────────────────────────
+from flask import Flask, request
+from datetime import datetime
+import pathlib
+
+SAVE_DIR = pathlib.Path("./photos")
+SAVE_DIR.mkdir(exist_ok=True)               # auto-create photos/ folder
+
+app = Flask(__name__)
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    fname = SAVE_DIR / f"photo_{ts}.jpg"
+    with open(fname, "wb") as f:
+        f.write(request.data)
+    print("Saved", fname)
+    return "OK\n"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5050)      # <- change port if you like
+# ─────────────────────────────────────────────────────────────────────
+
+Save (Ctrl+O, Enter) and exit (Ctrl+X) if using nano.
+
+────────────────────────────────────────────────────────────────────────
+5.  Run the receiver
+────────────────────────────────────────────────────────────────────────
+(venv) $ python receiver.py
+
+You should see something like:
+
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.1.175:5050
+
+Leave this Terminal window open.  
+Each time the ESP32-CAM uploads you’ll get:
+
+Saved photos/photo_20240602_123456_789012.jpg
+
+and the JPEG lands in  ~/esp32cam_inbox/photos/
+
+────────────────────────────────────────────────────────────────────────
+6.  Tell the ESP32-CAM where to POST
+────────────────────────────────────────────────────────────────────────
+In your Arduino sketch set:
+
+const char* POST_URL = "http://192.168.1.175:5050/upload";
+
+(use the LAN address shown by Flask; keep “/upload” path)
+
+Re-compile → upload → reset the ESP32-CAM.  
+Serial monitor should show:   
+Wi-Fi connected → HTTP rc=200 → Sleep
+
+────────────────────────────────────────────────────────────────────────
+7.  (Optional) run the server automatically at login
+────────────────────────────────────────────────────────────────────────
+Create file  ~/Library/LaunchAgents/esp32cam.receiver.plist
+with this content (replace **YOURUSER**):
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>       <string>local.esp32cam.receiver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOURUSER/esp32cam_inbox/venv/bin/python</string>
+    <string>/Users/YOURUSER/esp32cam_inbox/receiver.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOURUSER/esp32cam_inbox</string>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+
+Then load it once:
+
+$ launchctl load ~/Library/LaunchAgents/esp32cam.receiver.plist
+
+Now the Flask server starts silently every time you log in.
+
+────────────────────────────────────────────────────────────────────────
+8.  Handy commands
+────────────────────────────────────────────────────────────────────────
+Stop foreground server ..............  Ctrl + C
+Kill stray server process ...........  pkill -f receiver.py
+See who’s using a port ..............  lsof -i :5050
+Deactivate virtual-env ..............  deactivate
+────────────────────────────────────────────────────────────────────────
+
+The Mac side is now ready — every 30-second wake cycle the ESP32-CAM 
+posts a JPEG straight into  ~/esp32cam_inbox/photos/ , bypassing the SD card.
